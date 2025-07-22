@@ -6,8 +6,7 @@ from typing import Set
 import httpx
 from bs4 import BeautifulSoup
 
-from telegram import Bot
-from telegram.ext import Application, CommandHandler, ContextTypes, ApplicationBuilder
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -15,10 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# URL с объявлениями квартир на Otodom (актуальный и корректный)
 OTODOM_URL = "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/mazowieckie/warszawa/warszawa/warszawa"
-
-# Интервал проверки (в секундах)
 CHECK_INTERVAL = 300  # 5 минут
 
 
@@ -27,10 +23,6 @@ async def start(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT
 
 
 async def fetch_new_listings(existing_links: Set[str]) -> Set[str]:
-    """
-    Загружает страницу Otodom, парсит объявления, возвращает новые ссылки,
-    которых ещё нет в existing_links.
-    """
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; Bot/1.0; +https://github.com/)"
     }
@@ -40,8 +32,7 @@ async def fetch_new_listings(existing_links: Set[str]) -> Set[str]:
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        # Поиск ссылок на объявления — по классу ссылок на карточки
-        ads = soup.select("a.css-1bbgabe")  # класс надо проверить на сайте, актуальный
+        ads = soup.select("a.css-1bbgabe")
 
         new_links = set()
         for a in ads:
@@ -85,3 +76,22 @@ async def main():
         return
 
     try:
+        chat_id = int(chat_id_str)
+    except Exception:
+        logger.error("CHAT_ID должен быть целым числом.")
+        return
+
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start", start))
+
+    async def on_startup(app: Application):
+        app.create_task(periodic_task(app, chat_id))
+
+    app.post_init = on_startup
+
+    logger.info("Запускаем бота...")
+    await app.run_polling()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
