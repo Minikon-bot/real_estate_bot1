@@ -1,32 +1,27 @@
-import asyncio
+import os
 import logging
+import asyncio
 from telegram.ext import ApplicationBuilder
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def periodic_check(app):
     while True:
-        logger.info("Запуск проверки новых объявлений")
-        subscribers = []  # TODO: заменить на реальных подписчиков
-        if not subscribers:
-            logger.info("Нет подписчиков, пропускаем рассылку")
-        else:
-            # TODO: рассылка подписчикам
-            pass
-        await asyncio.sleep(60)
+        logger.info("Проверка новых объявлений")
+        # Здесь логика проверки и рассылки новых объявлений
+        await asyncio.sleep(60)  # пауза между проверками
 
 async def on_startup(app):
-    # Создаем задачу после запуска приложения
     app.create_task(periodic_check(app))
 
 def main():
-    app = ApplicationBuilder().token("YOUR_BOT_TOKEN").build()
+    token = os.getenv("TOKEN")  # читаем именно из переменной TOKEN
+    if not token:
+        logger.error("Переменная окружения TOKEN не задана!")
+        exit(1)
 
-    # Назначаем функцию, вызываемую ПОСЛЕ запуска приложения
+    app = ApplicationBuilder().token(token).build()
     app.post_init = on_startup
 
     logger.info("Бот запущен")
