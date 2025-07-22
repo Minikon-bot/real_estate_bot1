@@ -1,28 +1,32 @@
 import os
-import sys
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler
+import logging
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Получаем токен из переменной окружения
-TOKEN = os.getenv("TOKEN")
+# Логирование для отладки
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+TOKEN = os.getenv("TOKEN")  # Токен бота берём из переменной окружения
 
 if not TOKEN:
-    sys.exit("❌ Ошибка: переменная окружения TOKEN не задана. "
-             "Добавьте её в настройках Render → Environment Variables.")
+    raise RuntimeError("❌ Ошибка: переменная окружения TOKEN не задана! Добавьте её в Render → Environment Variables.")
 
-# Инициализация бота
-bot = Bot(token=TOKEN)
-updater = Updater(token=TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Бот успешно запущен на python-telegram-bot 20.3!")
 
-# Пример команды /start
-def start(update, context):
-    update.message.reply_text("Бот запущен и работает!")
+# Основная функция запуска
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-dispatcher.add_handler(CommandHandler("start", start))
+    # Регистрируем хендлеры
+    app.add_handler(CommandHandler("start", start))
 
-# Запуск бота
+    logging.info("Бот запущен и ожидает сообщения...")
+    app.run_polling()
+
 if __name__ == "__main__":
-    print("Бот успешно запущен...")
-    updater.start_polling()
-    updater.idle()
+    main()
