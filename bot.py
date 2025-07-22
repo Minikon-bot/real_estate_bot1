@@ -14,7 +14,7 @@ SENT_LINKS_FILE = "sent_links.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Функции для работы с файлами ---
+# --- Работа с отправленными ссылками ---
 def load_sent_links():
     if os.path.exists(SENT_LINKS_FILE):
         try:
@@ -48,32 +48,29 @@ async def fetch_new_listings():
         logger.error(f"Ошибка парсинга Otodom: {e}")
     return listings
 
-# --- JobQueue задача ---
-async def job_send_new_listings(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = os.getenv("CHAT_ID")
-    if not chat_id:
-        logger.error("CHAT_ID не установлен в переменных окружения")
-        return
+# --- Периодическая задача ---
+async def periodic_check(app, chat_id, sent_links):
+    while True:
+        new_links = await fetch_new_listings()
+        new_items = [link for link in new_links if link not in sent_links]
 
-    sent_links = context.job.data["sent_links"]
-    new_links = await fetch_new_listings()
-    new_items = [link for link in new_links if link not in sent_links]
+        if new_items:
+            for link in new_items:
+                try:
+                    await app.bot.send_message(chat_id=chat_id, text=f"Новое объявление: {link}")
+                    sent_links.add(link)
+                except Exception as e:
+                    logger.error(f"Ошибка отправки сообщения: {e}")
+            save_sent_links(sent_links)
 
-    if new_items:
-        for link in new_items:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=f"Новое объявление: {link}")
-                sent_links.add(link)
-            except Exception as e:
-                logger.error(f"Ошибка отправки сообщения: {e}")
-        save_sent_links(sent_links)
+        await asyncio.sleep(CHECK_INTERVAL)
 
 # --- Команда /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Бот запущен. Буду присылать новые объявления с Otodom!")
 
 # --- Основной запуск ---
-def main():
+async def main():
     token = os.getenv("TOKEN")
     chat_id = os.getenv("CHAT_ID")
 
@@ -82,19 +79,15 @@ def main():
         return
 
     app = Application.builder().token(token).build()
-
     app.add_handler(CommandHandler("start", start))
 
-    # Загружаем отправленные ссылки
     sent_links = load_sent_links()
 
-    if app.job_queue:
-        app.job_queue.run_repeating(job_send_new_listings, interval=CHECK_INTERVAL, first=5, data={"sent_links": sent_links})
-    else:
-        logger.error("JobQueue не активирован. Установите python-telegram-bot[job-queue].")
+    # Запускаем фоновую задачу без JobQueue
+    asyncio.create_task(periodic_check(app, chat_id, sent_links))
 
     logger.info("Запускаем бота...")
-    app.run_polling(close_loop=False)
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
