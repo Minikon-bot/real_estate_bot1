@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 sent_ads = set()
 
 async def fetch_ads():
-    url = "https://www.otodom.pl/pl/oferty/sprzedaz/mieszkanie/warszawa"
+    url = "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/cala-polska"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
