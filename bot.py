@@ -1,5 +1,5 @@
 import os
-import asyncio
+import json
 import logging
 from typing import Set
 
@@ -14,17 +14,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# URL Otodom и интервал проверки
+# Конфигурация
 OTODOM_URL = "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/mazowieckie/warszawa/warszawa/warszawa"
 CHECK_INTERVAL = 300  # 5 минут
+STATE_FILE = "sent_links.json"
 
 
-# Команда /start
+def load_sent_links() -> Set[str]:
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return set(json.load(f))
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке {STATE_FILE}: {e}")
+    return set()
+
+
+def save_sent_links(sent_links: Set[str]):
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(list(sent_links), f)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении {STATE_FILE}: {e}")
+
+
 async def start(update, context):
-    await update.message.reply_text("Привет! Я бот, буду присылать новые объявления с Otodom.")
+    await update.message.reply_text("Привет! Я бот и буду присылать новые объявления с Otodom.")
 
 
-# Функция получения новых объявлений
 async def fetch_new_listings(existing_links: Set[str]) -> Set[str]:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Bot/1.0; +https://github.com/)"}
     try:
@@ -39,42 +56,37 @@ async def fetch_new_listings(existing_links: Set[str]) -> Set[str]:
         return set()
 
 
-# Фоновая задача для отправки новых объявлений
-async def periodic_task(app: Application, chat_id: int):
-    sent_links = set()
-    while True:
-        try:
-            new_listings = await fetch_new_listings(sent_links)
-            for link in new_listings - sent_links:
-                await app.bot.send_message(chat_id=chat_id, text=f"Новое объявление:\n{link}")
-            sent_links |= new_listings
-        except Exception as e:
-            logger.error(f"Ошибка в периодической задаче: {e}")
-        await asyncio.sleep(CHECK_INTERVAL)
+async def job_send_new_listings(context):
+    app = context.application
+    chat_id = int(os.getenv("CHAT_ID"))
+    sent_links = context.job.data.setdefault("sent_links", load_sent_links())
+    new_listings = await fetch_new_listings(sent_links)
+    new_to_send = new_listings - sent_links
+
+    for link in new_to_send:
+        await app.bot.send_message(chat_id=chat_id, text=f"Новое объявление:\n{link}")
+
+    if new_to_send:
+        sent_links |= new_to_send
+        save_sent_links(sent_links)
 
 
-# Основная функция запуска бота
 def main():
     token = os.getenv("TOKEN")
-    chat_id_str = os.getenv("CHAT_ID")
-    if not token or not chat_id_str:
-        logger.error("Переменные окружения TOKEN и/или CHAT_ID не установлены. Выход.")
+    chat_id = os.getenv("CHAT_ID")
+    if not token or not chat_id:
+        logger.error("Переменные окружения TOKEN и/или CHAT_ID не установлены.")
         return
 
-    chat_id = int(chat_id_str)
-
-    # Создание приложения Telegram
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
 
-    # Фоновая задача после старта бота
-    async def on_startup(app: Application):
-        app.create_task(periodic_task(app, chat_id))
-
-    app.post_init = on_startup
+    # Загружаем уже отправленные ссылки
+    sent_links = load_sent_links()
+    app.job_queue.run_repeating(job_send_new_listings, interval=CHECK_INTERVAL, first=5, data={"sent_links": sent_links})
 
     logger.info("Запускаем бота...")
-    app.run_polling(close_loop=False)  # важно: не закрывать цикл событий
+    app.run_polling(close_loop=False)
 
 
 if __name__ == "__main__":
