@@ -1,106 +1,88 @@
 import os
 import asyncio
 import logging
-from typing import Set
-
 import httpx
 from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# URL с объявлениями, здесь пример — квартиры в Варшаве, можно изменить под свой регион
-OTODOM_URL = "https://www.otodom.pl/pl/oferty/sprzedaz/mieszkanie/warszawa"
+sent_ads = set()
 
-# Вставь сюда ID чата, куда бот будет рассылать новые объявления
-CHAT_ID = int(os.getenv("CHAT_ID", "0"))  # например, "123456789"
-
-# Время между проверками в секундах
-CHECK_INTERVAL = 300  # 5 минут
-
-# Хранилище уже отправленных объявлений (по ссылке)
-sent_links: Set[str] = set()
-
-
-async def fetch_listings() -> list[str]:
-    """
-    Парсим страницу Otodom, возвращаем список ссылок на новые объявления.
-    """
+async def fetch_new_ads():
+    url = "https://www.otodom.pl/pl/oferty/sprzedaz/mieszkanie/warszawa"
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; Bot/1.0; +https://yourbot.url)"
+        "User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"
     }
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(OTODOM_URL, headers=headers)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Селектор ссылок на объявления — может измениться, проверяй актуальность
-        offers = soup.select("article > a.css-1bbgabe")  # пример CSS-класса ссылки
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        html = response.text
 
-        links = []
-        for offer in offers:
-            href = offer.get("href")
-            if href:
-                # Ссылки могут быть относительными, добавим домен если нужно
-                if href.startswith("/"):
-                    href = "https://www.otodom.pl" + href
-                links.append(href)
+    soup = BeautifulSoup(html, "html.parser")
+    ads_links = set()
 
-        logger.info(f"Найдено объявлений: {len(links)}")
-        return links
+    for a in soup.find_all("a", href=True):
+        href = a['href']
+        if href.startswith("/oferta/"):
+            full_link = "https://www.otodom.pl" + href
+            ads_links.add(full_link)
 
+    return list(ads_links)
 
-async def periodic_check(app: Application):
+async def periodic_check(app: Application, chat_id: int):
     while True:
         try:
-            logger.info("Проверяем новые объявления на Otodom...")
-            new_links = await fetch_listings()
+            logger.info("Проверяем новые объявления...")
 
-            # Фильтруем только новые ссылки
-            fresh = [link for link in new_links if link not in sent_links]
+            new_ads = await fetch_new_ads()
+            fresh_ads = [ad for ad in new_ads if ad not in sent_ads]
 
-            if not fresh:
-                logger.info("Новых объявлений нет.")
+            if fresh_ads:
+                logger.info(f"Найдено {len(fresh_ads)} новых объявлений.")
+                for ad_link in fresh_ads:
+                    try:
+                        await app.bot.send_message(chat_id=chat_id, text=f"Новое объявление:\n{ad_link}")
+                        sent_ads.add(ad_link)
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки сообщения: {e}")
             else:
-                logger.info(f"Новых объявлений: {len(fresh)}. Отправляем сообщения.")
-                for link in fresh:
-                    text = f"Новое объявление:\n{link}"
-                    await app.bot.send_message(chat_id=CHAT_ID, text=text)
-                    sent_links.add(link)
+                logger.info("Новых объявлений нет.")
 
         except Exception as e:
             logger.error(f"Ошибка при проверке объявлений: {e}")
 
-        await asyncio.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(300)  # Пауза 5 минут
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я бот, буду присылать новые объявления с Otodom.")
-
-
-async def post_init(app: Application):
-    logger.info("Бот запущен. Стартуем периодическую проверку объявлений.")
-    app.create_task(periodic_check(app))
-
-
-def main():
+async def main():
     token = os.getenv("TOKEN")
+    chat_id_str = os.getenv("CHAT_ID")
+
     if not token:
-        logger.error("Переменная окружения TOKEN не установлена. Выход.")
+        logger.error("Переменная окружения TOKEN не установлена!")
         return
-    if CHAT_ID == 0:
-        logger.error("Переменная окружения CHAT_ID не установлена или равна 0. Выход.")
+    if not chat_id_str:
+        logger.error("Переменная окружения CHAT_ID не установлена!")
+        return
+
+    try:
+        chat_id = int(chat_id_str)
+    except ValueError:
+        logger.error("CHAT_ID должен быть числом!")
         return
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.post_init = post_init
-    app.run_polling()
 
+    logger.info("Запускаем бота...")
+
+    app.create_task(periodic_check(app, chat_id))
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
